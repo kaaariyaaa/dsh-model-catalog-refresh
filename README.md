@@ -22,7 +22,13 @@ DeepSeek Harness（DSH）の ACP プロファイルで、API プロバイダー�
 | Node.js | パッケージの指定は `>=20` |
 | プロファイル | `@deepseek-ai/dsh-acp-app` を含む ACP プロファイル |
 
-GitHub からプラグインを追加します。ビルド済みの `lib/` が含まれています。
+npm からプラグインを追加します。
+
+```sh
+dsh plugin --profile acp add dsh-model-catalog-refresh
+```
+
+GitHub から直接追加することもできます。ビルド済みの `lib/` が含まれています。
 
 ```sh
 dsh plugin --profile acp add github:kaaariyaaa/dsh-model-catalog-refresh
