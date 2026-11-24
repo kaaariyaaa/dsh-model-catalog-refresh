@@ -16,7 +16,13 @@ DeepSeek Harness（DSH）の **ACP プロファイル**で使う API 系プロ�
 
 ## インストール
 
-ローカルのチェックアウトを ACP プロファイルへ追加します。チェックアウトから入れる場合は、先にビルドしてください。
+GitHub からそのまま ACP プロファイルへ追加できます（ビルド済みの `lib/` を含みます）。
+
+```sh
+dsh plugin --profile acp add github:kaaariyaaa/dsh-model-catalog-refresh
+```
+
+ローカルのチェックアウトから入れる場合:
 
 ```sh
 cd /path/to/dsh-model-catalog-refresh
