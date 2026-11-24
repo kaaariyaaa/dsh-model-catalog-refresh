@@ -61,7 +61,9 @@ async function runRefresh(home, env = {}) {
     const child = spawn(dshBin, ['testacp', 'model-refresh'], {
       cwd: repo,
       env: { ...process.env, DSH_HOME: home, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // Keep stdin open: a CLI refresh must exit on its own, not because EOF
+      // happened to release an ACP bridge that should never have mounted.
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
@@ -156,8 +158,17 @@ test('CLI adds, removes, and preserves entries, then is idempotent', { skip }, a
   assert.equal((await fs.stat(path.join(profile, 'cordis.patch.yml'))).mtimeMs, mtime)
 })
 
-test('automatic startup refresh is visible to a new ACP session', { skip }, async (t) => {
-  const provider = await startProvider((_req, res) => {
+test('automatic startup refresh reaches a live ACP session and the next session', { skip }, async (t) => {
+  let releaseModels
+  const gate = new Promise((resolve) => { releaseModels = resolve })
+  const provider = await startProvider(async (req, res) => {
+    if (req.url.startsWith('/release')) {
+      releaseModels()
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('ok')
+      return
+    }
+    await gate
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({
       data: [
@@ -199,12 +210,14 @@ test('automatic startup refresh is visible to a new ACP session', { skip }, asyn
   let stderr = ''
   child.stderr.on('data', chunk => { stderr += chunk.toString() })
 
+  const notifications = []
   const pending = new Map()
   let nextId = 1
   const lines = readline.createInterface({ input: child.stdout })
   lines.on('line', (line) => {
     let message
     try { message = JSON.parse(line) } catch { return }
+    if (message.method === 'session/update') notifications.push(message.params)
     const waiter = pending.get(message.id)
     if (waiter === undefined) return
     pending.delete(message.id)
@@ -225,18 +238,43 @@ test('automatic startup refresh is visible to a new ACP session', { skip }, asyn
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
   })
 
+  const modelNames = (configOptions) => {
+    const modelOption = configOptions?.find(option => option.id === 'model')
+    return (modelOption?.options ?? []).flatMap(group => group.options.map(option => `${group.group}/${option.name}`))
+  }
+
+  await request('initialize', { protocolVersion: 1, clientCapabilities: {} })
+  const first = await request('session/new', { cwd, mcpServers: [] })
+  assert.ok(modelNames(first.configOptions).includes('fake/Keep Me'))
+  assert.ok(!modelNames(first.configOptions).includes('fake/New A'), 'refresh must still be waiting on the provider gate')
+
+  // Release the provider now that a session exists; the plugin must update the
+  // stored catalog and push config_option_update to the live session.
+  const release = await fetch(`http://127.0.0.1:${String(provider.port)}/release`)
+  assert.equal(release.status, 200)
+
   const deadline = Date.now() + 20_000
   while (!(await readPatch(profile)).includes('new-a')) {
     if (Date.now() > deadline) throw new Error(`startup refresh did not persist\n${stderr}`)
     await new Promise(resolve => setTimeout(resolve, 50))
   }
+  let liveNames
+  while (Date.now() < deadline) {
+    for (const notification of notifications) {
+      if (notification.update?.sessionUpdate !== 'config_option_update') continue
+      const names = modelNames(notification.update.configOptions)
+      if (names.includes('fake/New A')) liveNames = names
+    }
+    if (liveNames !== undefined) break
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.ok(liveNames !== undefined, `expected a live config_option_update with New A\n${stderr}`)
+  assert.ok(liveNames.includes('fake/Keep Me'))
 
-  await request('initialize', { protocolVersion: 1, clientCapabilities: {} })
-  const session = await request('session/new', { cwd, mcpServers: [] })
-  const modelOption = session.configOptions.find(option => option.id === 'model')
-  const names = (modelOption?.options ?? []).flatMap(group => group.options.map(option => `${group.group}/${option.name}`))
-  assert.ok(names.includes('fake/New A'), `expected refreshed model in ${JSON.stringify(names)}`)
-  await request('session/close', { sessionId: session.sessionId }).catch(() => {})
+  const second = await request('session/new', { cwd, mcpServers: [] })
+  assert.ok(modelNames(second.configOptions).includes('fake/New A'))
+  await request('session/close', { sessionId: first.sessionId }).catch(() => {})
+  await request('session/close', { sessionId: second.sessionId }).catch(() => {})
   child.stdin.end()
 })
 

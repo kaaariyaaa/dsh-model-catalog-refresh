@@ -58,3 +58,15 @@ test('the stored input array is not mutated', () => {
   mergeModelLists(existing, [{ id: 'b' }])
   assert.deepEqual(existing, snapshot)
 })
+
+
+test('unsafe stored ids are refused', () => {
+  assert.throws(
+    () => mergeModelLists([{ id: '__proto__' }], [{ id: 'a' }]),
+    (error) => error.code === 'INVALID_EXISTING_MODELS',
+  )
+  assert.throws(
+    () => mergeModelLists([{ id: 'x'.repeat(300) }], [{ id: 'a' }]),
+    (error) => error.code === 'INVALID_EXISTING_MODELS',
+  )
+})

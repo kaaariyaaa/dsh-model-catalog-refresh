@@ -7,6 +7,12 @@
 import type { RefreshReport } from './types.js'
 import type { LoggerLike } from './service.js'
 
+/** Strip control characters and bound one config-derived label. */
+function safeText(value: string, maxLength = 300): string {
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}…` : cleaned
+}
+
 /** Format a token-count delta for a provider line. */
 function changeDetail(added: number, removed: number, total: number): string {
   const parts = [`${String(total)} model${total === 1 ? '' : 's'}`]
@@ -22,14 +28,15 @@ function changeDetail(added: number, removed: number, total: number): string {
  */
 export function formatReport(report: RefreshReport): string {
   const lines: string[] = [`model-catalog-refresh: ${report.reason} refresh`]
-  if (report.error !== undefined) lines.push(`  error: ${report.error}`)
+  if (report.error !== undefined) lines.push(`  error: ${safeText(report.error)}`)
   for (const provider of report.providers) {
+    const label = safeText(provider.provider, 120)
     if (provider.status === 'failed') {
-      lines.push(`  ${provider.provider}: FAILED — ${provider.error ?? 'unknown error'}`)
+      lines.push(`  ${label}: FAILED — ${safeText(provider.error ?? 'unknown error')}`)
     } else if (provider.status === 'updated') {
-      lines.push(`  ${provider.provider}: updated — ${changeDetail(provider.added.length, provider.removed.length, provider.total)}`)
+      lines.push(`  ${label}: updated — ${changeDetail(provider.added.length, provider.removed.length, provider.total)}`)
     } else {
-      lines.push(`  ${provider.provider}: unchanged — ${changeDetail(0, 0, provider.total)}`)
+      lines.push(`  ${label}: unchanged — ${changeDetail(0, 0, provider.total)}`)
     }
   }
   if (report.providers.length === 0 && report.error === undefined) {
@@ -51,13 +58,14 @@ export function formatReport(report: RefreshReport): string {
  * @param logger - host logger.
  */
 export function logReport(report: RefreshReport, logger: LoggerLike): void {
-  if (report.error !== undefined) logger.error(`model-catalog-refresh: ${report.error}`)
+  if (report.error !== undefined) logger.error(`model-catalog-refresh: ${safeText(report.error)}`)
   for (const provider of report.providers) {
+    const label = safeText(provider.provider, 120)
     if (provider.status === 'failed') {
-      logger.warn(`model-catalog-refresh: ${provider.provider}: ${provider.error ?? 'unknown error'}`)
+      logger.warn(`model-catalog-refresh: ${label}: ${safeText(provider.error ?? 'unknown error')}`)
     } else if (provider.status === 'updated') {
       logger.info(
-        `model-catalog-refresh: ${provider.provider}: ${changeDetail(provider.added.length, provider.removed.length, provider.total)}`,
+        `model-catalog-refresh: ${label}: ${changeDetail(provider.added.length, provider.removed.length, provider.total)}`,
       )
     }
   }

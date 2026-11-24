@@ -14,6 +14,10 @@
 import { CatalogRefreshError } from './errors.js'
 import type { DiscoveredModel } from './types.js'
 
+/** Match the listing reader's id bounds so a stored list cannot smuggle an unsafe key. */
+const MAX_MODEL_ID_LENGTH = 256
+const UNSAFE_MODEL_IDS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+
 /** Existing entry shape this module understands. */
 interface StoredModel {
   readonly id: string
@@ -52,6 +56,16 @@ function storedModels(models: readonly unknown[]): StoredModel[] {
       )
     }
     const id = raw.id
+    if (
+      id.length > MAX_MODEL_ID_LENGTH
+      || UNSAFE_MODEL_IDS.has(id)
+      || /[\u0000-\u001f\u007f]/.test(id)
+    ) {
+      throw new CatalogRefreshError(
+        'INVALID_EXISTING_MODELS',
+        `the stored model list has an unsafe id at index ${String(index)}; fix it before refreshing`,
+      )
+    }
     if (seen.has(id)) {
       throw new CatalogRefreshError(
         'INVALID_EXISTING_MODELS',

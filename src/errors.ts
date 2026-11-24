@@ -45,8 +45,16 @@ export class CatalogRefreshError extends Error {
  * @param error - caught value.
  * @returns a single-line, safe description.
  */
+const SAFE_ERROR_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/
+
 export function describeError(error: unknown): string {
   if (error instanceof CatalogRefreshError) return error.message
-  if (error instanceof Error) return error.message.length > 0 ? error.message : error.name
-  return String(error)
+  // Foreign service errors (schema validation, YAML parsing, credential
+  // providers) can embed the offending configuration value in their message.
+  // Keep only a bounded error-class name so a credential or header cannot
+  // reach a report or the Host log through this path.
+  if (error instanceof Error && SAFE_ERROR_NAME.test(error.name)) {
+    return `operation failed (${error.name})`
+  }
+  return 'operation failed'
 }

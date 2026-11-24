@@ -167,7 +167,27 @@ test('invalid base URLs are refused', () => {
 test('sanitizeUrl removes query credentials and userinfo', () => {
   assert.equal(
     sanitizeUrl('https://user:pass@example.test/v1/models?key=secret'),
-    'https://example.test/v1/models',
+    'https://example.test',
   )
   assert.equal(sanitizeUrl('not a URL'), '<invalid URL>')
+})
+
+
+test('unsafe, oversized, or control-bearing ids and names are not persisted', () => {
+  const models = parseModelListing({
+    data: [
+      { id: '__proto__' },
+      { id: 'constructor' },
+      { id: 'x'.repeat(300) },
+      { id: 'bad\nid' },
+      { id: 'ok', name: 'bad\nname' },
+      { id: 'too-long-name', name: 'n'.repeat(300) },
+      { id: 'good', name: 'Good Model', context_length: 1000 },
+    ],
+  }, 'openai-completions')
+  assert.deepEqual(models, [
+    { id: 'ok' },
+    { id: 'too-long-name' },
+    { id: 'good', name: 'Good Model', contextWindow: 1000 },
+  ])
 })

@@ -3,7 +3,7 @@
  *
  * The service is deliberately independent of Cordis and of the concrete
  * pi-ai adapter: it consumes the public LLM configurable-provider directory
- * and Settings service shapes, then writes only each provider's `models`
+ * and configuration-editor shapes, then writes only each provider's `models`
  * array. A different adapter family that declares those same public facts is
  * refreshed by the same mechanism.
  *
@@ -51,8 +51,8 @@ export interface ModelListUpdate {
   readonly path: readonly string[]
   /** Merged model entries. */
   readonly models: readonly Record<string, unknown>[]
-  /** JSON of the stored list this merge was computed from, for a write-time conflict check. */
-  readonly expected: string
+  /** Stored list this merge was computed from, for a write-time conflict check. */
+  readonly expected: readonly unknown[]
 }
 
 /** Minimal logger shape used by the service. */
@@ -101,6 +101,9 @@ interface RefreshTarget {
   readonly apiKey?: string
   readonly existingModels: readonly unknown[]
 }
+
+/** Credential references are POSIX environment-variable names. */
+const CREDENTIAL_REF = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /** One provider whose merged list must be persisted. */
 interface PendingChange {
@@ -254,7 +257,17 @@ export class ModelCatalogRefresh {
         if (outcome.change !== undefined) changes.push(outcome.change)
       }
       if (changes.length > 0) {
-        written = await this.persist(changes, reports)
+        if (this.disposed) {
+          for (const change of changes) {
+            this.markFailed(
+              change,
+              new CatalogRefreshError('REQUEST_FAILED', 'refresh was cancelled before saving'),
+              reports,
+            )
+          }
+        } else {
+          written = await this.persist(changes, reports)
+        }
       }
     } catch (caught: unknown) {
       error = describeError(caught)
@@ -356,8 +369,9 @@ export class ModelCatalogRefresh {
       let apiKey: string | undefined
       const ref = profile.apiKeyEnv
       if (ref !== undefined) {
-        if (typeof ref !== 'string' || ref.trim().length === 0) {
-          failures.push(failedReport(entry.provider, displayName, 'the provider "apiKeyEnv" field must be a non-empty credential reference', configuredModels.length))
+        if (typeof ref !== 'string' || !CREDENTIAL_REF.test(ref)) {
+          // Never echo the field: a user may have pasted a key into apiKeyEnv.
+          failures.push(failedReport(entry.provider, displayName, 'the provider "apiKeyEnv" field is not a valid environment-variable name', configuredModels.length))
           continue
         }
         try {
@@ -366,7 +380,7 @@ export class ModelCatalogRefresh {
             failures.push(failedReport(
               entry.provider,
               displayName,
-              `credential ${ref} is not set`,
+              'the provider credential is not set',
               configuredModels.length,
             ))
             continue
@@ -458,10 +472,13 @@ export class ModelCatalogRefresh {
       else group.push(change)
     }
     let written = false
+    const writtenProviders = new Set<string>()
     for (const [namespace, group] of groups) {
+      if (this.disposed) break
       try {
         await this.writeGroup(namespace, group)
         written = true
+        for (const change of group) writtenProviders.add(change.target.provider)
       } catch (caught: unknown) {
         if (group.length === 1) {
           const only = group[0]
@@ -473,13 +490,24 @@ export class ModelCatalogRefresh {
           try {
             await this.writeGroup(namespace, [change])
             written = true
+            writtenProviders.add(change.target.provider)
           } catch (individual: unknown) {
             this.markFailed(change, individual, reports)
           }
         }
       }
     }
-    if (written) this.emitAdapters()
+    if (this.disposed) {
+      for (const change of changes) {
+        if (writtenProviders.has(change.target.provider)) continue
+        this.markFailed(
+          change,
+          new CatalogRefreshError('REQUEST_FAILED', 'refresh was cancelled before saving'),
+          reports,
+        )
+      }
+    }
+    if (written && !this.disposed) this.emitAdapters()
     return written
   }
 
@@ -488,7 +516,7 @@ export class ModelCatalogRefresh {
     await this.deps.writeModels(namespace, group.map(change => ({
       path: change.target.modelsPath,
       models: change.models,
-      expected: JSON.stringify(change.target.existingModels),
+      expected: change.target.existingModels,
     })))
     for (const change of group) this.emitModels(change.target.provider)
   }
@@ -500,7 +528,7 @@ export class ModelCatalogRefresh {
       change.target.provider,
       change.target.displayName,
       `could not persist the model list: ${describeError(caught)}`,
-      change.report.total,
+      change.target.existingModels.length,
     )
     if (index >= 0) reports[index] = failed
   }

@@ -97,7 +97,7 @@ test('updates one provider, preserves existing entries, and emits refresh events
       { id: 'keep', name: 'Keep', contextWindow: 123 },
       { id: 'new', name: 'New Model', contextWindow: 65536, maxTokens: 4096 },
     ],
-    expected: JSON.stringify([{ id: 'keep', name: 'Keep', contextWindow: 123 }, { id: 'old' }]),
+    expected: [{ id: 'keep', name: 'Keep', contextWindow: 123 }, { id: 'old' }],
   }])
   assert.deepEqual(harness.events, [['models', 'gateway'], ['adapters']])
   assert.doesNotMatch(JSON.stringify(report), /secret-key/)
@@ -161,7 +161,8 @@ test('a missing credential is reported before any network request', async () => 
 
   assert.equal(fetched, false)
   assert.equal(report.failed, 1)
-  assert.match(report.providers[0].error, /GATEWAY_KEY is not set/)
+  assert.match(report.providers[0].error, /provider credential is not set/)
+  assert.doesNotMatch(JSON.stringify(report), /GATEWAY_KEY/)
   assert.deepEqual(harness.writes, [])
 })
 
@@ -195,7 +196,7 @@ test('a persistence failure keeps the old list and suppresses change events', as
 
   assert.equal(report.written, false)
   assert.equal(report.failed, 1)
-  assert.match(report.providers[0].error, /could not persist the model list: configuration write refused/)
+  assert.match(report.providers[0].error, /could not persist the model list: operation failed \(Error\)/)
   assert.deepEqual(harness.events, [])
 })
 
@@ -276,7 +277,7 @@ test('a rejected grouped write is retried per provider so one bad list does not 
   assert.equal(report.written, true)
   assert.equal(report.providers[0].status, 'updated')
   assert.equal(report.providers[1].status, 'failed')
-  assert.match(report.providers[1].error, /b is invalid/)
+  assert.match(report.providers[1].error, /could not persist the model list/)
   assert.deepEqual(harness.events, [['models', 'a'], ['adapters']])
 })
 
@@ -315,8 +316,49 @@ test('a missing configuration editor is a run-wide error', async () => {
   const service = new ModelCatalogRefresh(harness.deps)
   const report = await service.refresh('manual')
 
-  assert.match(report.error, /configuration unavailable/)
+  assert.match(report.error, /operation failed/)
   assert.equal(report.providers.length, 0)
+})
+
+test('apiKeyEnv values that are not environment names are not echoed', async () => {
+  let fetched = false
+  const harness = baseDeps({
+    listConfigurableProviders: () => [directoryEntry('gateway')],
+    describeConfig: () => configSnapshot({ gateway: providerProfile({ apiKeyEnv: 'sk-live-secret' }) }),
+    fetchImpl: async () => {
+      fetched = true
+      return jsonResponse({ data: [{ id: 'x' }] })
+    },
+  })
+  const service = new ModelCatalogRefresh(harness.deps)
+  const report = await service.refresh('manual')
+
+  assert.equal(fetched, false)
+  assert.equal(report.failed, 1)
+  assert.match(report.providers[0].error, /not a valid environment-variable name/)
+  assert.doesNotMatch(JSON.stringify(report), /sk-live-secret/)
+})
+
+test('disposing before persistence prevents a write and marks the change unsaved', async () => {
+  let release
+  const harness = baseDeps({
+    listConfigurableProviders: () => [directoryEntry('gateway')],
+    describeConfig: () => configSnapshot({ gateway: providerProfile() }),
+    fetchImpl: () => new Promise((resolve) => {
+      release = () => resolve(jsonResponse({ data: [{ id: 'new' }] }))
+    }),
+  })
+  const service = new ModelCatalogRefresh(harness.deps)
+  const pending = service.refresh('manual')
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  service.dispose()
+  release()
+  const report = await pending
+
+  assert.equal(report.written, false)
+  assert.deepEqual(harness.writes, [])
+  assert.equal(report.providers[0].status, 'failed')
+  assert.match(report.providers[0].error, /cancelled before saving/)
 })
 
 test('providers without an explicit model list are not targets', async () => {

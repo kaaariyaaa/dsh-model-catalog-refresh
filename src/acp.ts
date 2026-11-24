@@ -4,21 +4,23 @@
  * The shipped ACP app owns a zero-option commander program and claims stdio
  * from its default action. This entry replaces that row so the same default
  * action still serves every valid ACP invocation, while a `model-refresh`
- * subcommand refreshes all provider catalogs and exits before the ACP bridge
- * is told to claim stdio. Stdout therefore never carries a human line during
- * a normal ACP session.
+ * subcommand refreshes all provider catalogs and exits without binding its
+ * lifetime to ACP stdin. Stdout therefore never carries a human line during a
+ * normal ACP session.
  *
  * @module dsh-model-catalog-refresh/acp
  */
 
 import { Command } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
-import { ACP_APP_STARTUP_SERVICE } from '@deepseek-ai/dsh-acp-app'
 import { exitOnStdinEnd, parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import type {} from './index.js'
 
 import { describeError } from './errors.js'
 import { formatReport } from './report.js'
+
+/** Service name the ACP bridge row waits for; part of the ACP app's public contract. */
+const ACP_APP_STARTUP_SERVICE = 'acpAppStartup'
 
 /** Stable plugin name for diagnostics. */
 export const name = 'model-catalog-refresh-acp'
@@ -85,17 +87,13 @@ Examples:
     .command('model-refresh')
     .description('refresh every API provider model catalog now, then exit')
     .action(() => {
-      // The ACP bundle marks its bridge row required, so the root tree only
-      // commits appReady once that row has its startup service. Provide the
-      // service here as well, but deliberately omit exitOnStdinEnd: this
-      // invocation refreshes and exits, and must not bind its lifetime to
-      // the client stdin stream.
-      ctx.provide(ACP_APP_STARTUP_SERVICE, { accepted: true })
+      // The bundle patch disables the ACP bridge row for this invocation, so
+      // no acpAppStartup consumer exists and nothing can bind stdin. appReady
+      // still commits once the rest of the tree mounts.
       const launch = (): void => {
         void runManual(ctx).catch((error: unknown) => {
-          process.stderr.write(`model-catalog-refresh: ${describeError(error)}\n`)
           const exit = ctx.get('appExit')
-          exit?.(1)
+          process.stderr.write(`model-catalog-refresh: ${describeError(error)}\n`, () => { exit?.(1) })
         })
       }
       // Commander parses during tree mount, when provider adapters and the

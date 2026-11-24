@@ -5,15 +5,17 @@
  * scheduler. The service discovers eligible API providers from the public
  * configurable-provider directory, interrogates each listing endpoint, merges
  * the result with the stored list, and persists only the `models` array
- * through the Settings service. Server configuration, credentials, headers,
- * and model-level customization stay untouched.
+ * through the profile's configuration editor. Server configuration,
+ * credentials, headers, and model-level customization stay untouched.
  *
  * The companion entry `dsh-model-catalog-refresh/acp` replaces the ACP app's
  * startup row so `dsh --profile acp model-refresh` can run one refresh and
- * exit without claiming stdio for the ACP bridge.
+ * exit without binding the process lifetime to ACP stdin.
  *
  * @module dsh-model-catalog-refresh
  */
+
+import { isDeepStrictEqual } from 'node:util'
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-config-editor'
@@ -109,7 +111,7 @@ function launchEnvironmentValue(ctx: Context, ref: string): string | undefined {
 
 /**
  * Mount the refresh service.
- * @param ctx - plugin context with the LLM registry and, on ACP, Settings.
+ * @param ctx - plugin context with the LLM registry and a writable profile.
  */
 export function apply(ctx: Context): void {
   const logger: LoggerLike = {
@@ -153,29 +155,31 @@ export function apply(ctx: Context): void {
       if (entry === undefined) {
         throw new CatalogRefreshError('INVALID_CONFIG', `the profile entry "${ns}" is no longer available`)
       }
-      const row = editor.configuration().find(candidate => candidate.entry.options.id === ns)
-      const raw = structuredClone(row?.override ?? {})
-      if (!isRecord(raw)) {
-        throw new CatalogRefreshError('INVALID_CONFIG', `the profile entry "${ns}" does not hold an object config`)
-      }
-      for (const update of updates) {
-        const current = getAtPath(raw, update.path)
-        if (JSON.stringify(current) !== update.expected) {
-          throw new CatalogRefreshError(
-            'INVALID_CONFIG',
-            `the model list at "${update.path.join('.')}" changed during this refresh; run it again`,
-          )
+      // edit() runs this callback under the profile's file lock, after
+      // reconciling any edits another process made. Applying the model paths
+      // to that fresh current config, rather than to a pre-lock snapshot,
+      // preserves concurrent changes to other providers and settings.
+      await editor.edit(entry, (current) => {
+        if (!isRecord(current)) {
+          throw new CatalogRefreshError('INVALID_CONFIG', `the profile entry "${ns}" does not hold an object config`)
         }
-        try {
-          setAtPath(raw, update.path, update.models)
-        } catch (error: unknown) {
-          throw new CatalogRefreshError('INVALID_CONFIG', describeError(error), { cause: error })
+        const next = structuredClone(current)
+        for (const update of updates) {
+          const actual = getAtPath(next, update.path)
+          if (!isDeepStrictEqual(actual, update.expected)) {
+            throw new CatalogRefreshError(
+              'INVALID_CONFIG',
+              `the model list at "${update.path.join('.')}" changed during this refresh; run it again`,
+            )
+          }
+          try {
+            setAtPath(next, update.path, update.models)
+          } catch (error: unknown) {
+            throw new CatalogRefreshError('INVALID_CONFIG', describeError(error), { cause: error })
+          }
         }
-      }
-      // edit() validates the complete config, checks that a home patch or
-      // command-line overlay does not make the write ineffective, and then
-      // reconciles the profile through the normal Loader path.
-      await editor.edit(entry, () => raw)
+        return next
+      })
     },
     resolveCredential: async (ref: string): Promise<string | undefined> => {
       const credentials = ctx.get('credentials')

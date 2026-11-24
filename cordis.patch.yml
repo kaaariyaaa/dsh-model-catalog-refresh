@@ -14,6 +14,13 @@
 - id: acp-app-startup
   disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-acp-app') === true"
 
+# A manual refresh must not mount the ACP bridge: the bridge binds stdio and
+# would keep the process alive after the report. Disabling the row for the
+# model-refresh invocation also removes its acpAppStartup requirement, so the
+# CLI can wait for appReady and exit without providing that service.
+- id: acp
+  disabled: !!js "ctx.get('cmdlineArgs')?.get()?.includes('model-refresh') === true"
+
 - insert:
     - id: model-catalog-refresh
       name: dsh-model-catalog-refresh

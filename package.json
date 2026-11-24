@@ -45,11 +45,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.js",
     "test:unit": "node --test test/*.test.js",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "npm run build"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.1.0",
-    "@deepseek-ai/dsh-acp-app": ">=0.2.2-0 <0.3.0",
     "@deepseek-ai/dsh-cmdline": ">=0.2.2-0 <0.3.0",
     "@deepseek-ai/dsh-config-editor": ">=0.2.2-0 <0.3.0",
     "@deepseek-ai/dsh-credentials": ">=0.2.2-0 <0.3.0",
@@ -60,7 +60,6 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
-    "@deepseek-ai/dsh-acp-app": "0.2.2-rc.5",
     "@deepseek-ai/dsh-cmdline": "0.2.2-rc.5",
     "@deepseek-ai/dsh-config-editor": "0.2.2-rc.5",
     "@deepseek-ai/dsh-credentials": "0.2.2-rc.5",

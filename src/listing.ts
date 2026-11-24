@@ -26,6 +26,20 @@ export const LISTING_PROTOCOLS = [
 /** One supported listing protocol. */
 export type ListingProtocol = (typeof LISTING_PROTOCOLS)[number]
 
+/** Largest model id accepted from a listing; ids are route keys, not prose. */
+const MAX_MODEL_ID_LENGTH = 256
+
+/** Largest display name accepted from a listing. */
+const MAX_MODEL_NAME_LENGTH = 200
+
+/** Model ids that could be mistaken for object-prototype keys downstream. */
+const UNSAFE_MODEL_IDS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Whether a listing value contains terminal/log control characters. */
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f]/.test(value)
+}
+
 /** Largest listing page requested from Anthropic. */
 const ANTHROPIC_MODEL_LIMIT = 1000
 
@@ -36,7 +50,7 @@ const GEMINI_MODEL_LIMIT = 1000
 const ANTHROPIC_VERSION = '2023-06-01'
 
 /** Id families that are unambiguously not chat endpoints when a listing omits a type. */
-const NON_CHAT_ID = /(^|[-_/.])(embedding|embeddings|embed|rerank|reranker|moderation|whisper|tts|speech|transcription|dall-e|gpt-image|stable-diffusion|sdxl)([-_/.]|$)/i
+const NON_CHAT_ID = /(^|[-_/.])(embedding|embeddings|embed|rerank|reranker|moderation|whisper|tts|speech|transcription|transcribe|realtime|sora|dall-e|gpt-image|stable-diffusion|sdxl)([-_/.]|$)/i
 
 /** Entry types that cannot serve a chat completion. */
 const NON_CHAT_TYPES: ReadonlySet<string> = new Set([
@@ -127,16 +141,17 @@ export function buildListingUrl(baseURL: string, api: ListingProtocol): URL {
 }
 
 /**
- * Render a URL for logs with userinfo, query, and fragment removed. Provider
- * endpoints sometimes carry a credential in a query parameter, so no part of
- * the query is safe to print.
+ * Render a URL for logs as its origin only. Provider endpoints sometimes carry
+ * a credential in a query parameter, userinfo, or a path segment; none of
+ * those are safe to print, and the provider route already identifies which
+ * endpoint failed.
  * @param url - URL or URL string.
- * @returns `origin/path`, or a fixed placeholder when unparseable.
+ * @returns the origin, or a fixed placeholder when unparseable.
  */
 export function sanitizeUrl(url: string | URL): string {
   try {
     const parsed = url instanceof URL ? url : new URL(url)
-    return `${parsed.origin}${parsed.pathname}`
+    return parsed.origin
   } catch {
     return '<invalid URL>'
   }
@@ -150,7 +165,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** First positive integer among candidate fields. */
 function positiveInteger(...candidates: readonly unknown[]): number | undefined {
   for (const candidate of candidates) {
-    if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0) return candidate
+    if (typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0) return candidate
   }
   return undefined
 }
@@ -262,6 +277,23 @@ function rawEntries(body: unknown): RawEntry[] {
   )
 }
 
+/**
+ * Flatten one reply into raw model-entry values.
+ *
+ * A map key is the request id, so it is stamped onto the value as `id`; this
+ * lets paginated pages be concatenated into the `data`/`models` array shape
+ * the parser already understands.
+ * @param body - one decoded listing reply.
+ * @returns raw entry objects, or an empty list for an empty page.
+ * @throws {CatalogRefreshError} when the reply has no recognizable listing shape.
+ */
+export function listingRows(body: unknown): unknown[] {
+  return rawEntries(body).map(({ key, value }) => {
+    if (key === undefined || key.length === 0) return value
+    return { ...value, id: key }
+  })
+}
+
 /** Read one raw entry, or undefined when it is not a usable chat model. */
 function normalizeEntry(entry: RawEntry, api: ListingProtocol): DiscoveredModel | undefined {
   const raw = entry.value
@@ -273,13 +305,24 @@ function normalizeEntry(entry: RawEntry, api: ListingProtocol): DiscoveredModel 
   const gemini = api === 'google-generative-ai'
   const id = nonEmptyString(entry.key, gemini ? raw.name : raw.id)
     ?.replace(/^models\//, '')
-  if (id === undefined || id.length === 0) return undefined
+  if (
+    id === undefined
+    || id.length === 0
+    || id.length > MAX_MODEL_ID_LENGTH
+    || UNSAFE_MODEL_IDS.has(id)
+    || hasControlCharacters(id)
+  ) return undefined
   // Gemini's `name` is the resource id, not a label; its human label is
   // `displayName`. Other protocols publish a label in `name`.
   const geminiName = typeof raw.name === 'string' ? raw.name.replace(/^models\//, '') : undefined
-  const name = gemini
+  const candidateName = gemini
     ? nonEmptyString(raw.displayName, raw.display_name, geminiName)
     : nonEmptyString(raw.name, raw.display_name, raw.displayName)
+  const name = candidateName === undefined
+    || candidateName.length > MAX_MODEL_NAME_LENGTH
+    || hasControlCharacters(candidateName)
+    ? undefined
+    : candidateName
   const contextWindow = positiveInteger(
     raw.contextWindow,
     raw.context_window,
