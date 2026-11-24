@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Refresh DeepSeek Harness ACP API-provider model catalogs on a 4-hour schedule and from the command line",
   "license": "MIT",
+  "author": "kaaariyaaa",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaaariyaaa/dsh-model-catalog-refresh.git"
+  },
+  "homepage": "https://github.com/kaaariyaaa/dsh-model-catalog-refresh#readme",
+  "bugs": {
+    "url": "https://github.com/kaaariyaaa/dsh-model-catalog-refresh/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
