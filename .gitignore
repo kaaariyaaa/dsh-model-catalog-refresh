@@ -1,0 +1,7 @@
+node_modules/
+lib/
+.tmp/
+.npm-cache/
+.pnpm-store/
+coverage/
+*.log

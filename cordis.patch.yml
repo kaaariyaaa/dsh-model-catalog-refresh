@@ -1,0 +1,23 @@
+# Bundle self-activation patch for dsh-model-catalog-refresh.
+#
+# 1. Mount the refresh service in every profile. It is dormant until the ACP
+#    startup entry calls start(); other profile modes pay nothing.
+# 2. On a profile composed with the ACP app bundle, replace the app's startup
+#    row so `dsh --profile acp model-refresh` is accepted. The replacement
+#    keeps the original zero-option serve behavior byte-for-byte for every
+#    other invocation and only claims stdio after Commander accepts it.
+#
+# The ACP gate uses the bundle list recorded by the launcher rather than the
+# profile name, so a renamed copy of the ACP profile keeps working. In a
+# non-ACP profile the first row below is reported as a missing entry; the
+# inserted startup row stays disabled and the refresh service remains mounted.
+- id: acp-app-startup
+  disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-acp-app') === true"
+
+- insert:
+    - id: model-catalog-refresh
+      name: dsh-model-catalog-refresh
+
+    - id: model-catalog-refresh-acp
+      name: dsh-model-catalog-refresh/acp
+      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-acp-app') !== true"
