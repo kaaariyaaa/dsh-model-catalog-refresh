@@ -59,7 +59,7 @@ test('start schedules one zero-delay run and one four-hour interval', () => {
   assert.equal(periodic, 1)
 })
 
-test('stop clears both timers and later starts are ignored', () => {
+test('stop clears both timers and allows a later restart', () => {
   const fake = fakeTimers()
   const scheduler = createRefreshScheduler(() => {}, () => {}, 1000, fake.timers)
   scheduler.start()
@@ -68,6 +68,6 @@ test('stop clears both timers and later starts are ignored', () => {
   assert.equal(fake.created.clearedTimeouts.length, 1)
   assert.equal(fake.created.clearedIntervals.length, 1)
   scheduler.start()
-  assert.equal(fake.created.timeouts.length, 1)
-  assert.equal(fake.created.intervals.length, 1)
+  assert.equal(fake.created.timeouts.length, 2)
+  assert.equal(fake.created.intervals.length, 2)
 })

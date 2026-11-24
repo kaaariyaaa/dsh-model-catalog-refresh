@@ -200,6 +200,23 @@ test('a persistence failure keeps the old list and suppresses change events', as
   assert.deepEqual(harness.events, [])
 })
 
+test('a home-patch override is reported as actionable guidance, not raw editor text', async () => {
+  const harness = baseDeps({
+    listConfigurableProviders: () => [directoryEntry('gateway')],
+    describeConfig: () => configSnapshot({ gateway: providerProfile() }),
+    fetchImpl: async () => jsonResponse({ data: [{ id: 'new' }] }),
+    writeModels: async () => {
+      throw new Error('Configuration for "llm-pi-ai" is overridden by a home patch or command-line overlay: sk-live-hidden')
+    },
+  })
+  const service = new ModelCatalogRefresh(harness.deps)
+  const report = await service.refresh('manual')
+
+  assert.equal(report.failed, 1)
+  assert.match(report.providers[0].error, /overridden by a home patch or --patch overlay/)
+  assert.doesNotMatch(JSON.stringify(report), /sk-live-hidden/)
+})
+
 test('an unchanged catalog writes nothing and does not wake consumers', async () => {
   const harness = baseDeps({
     listConfigurableProviders: () => [directoryEntry('gateway')],

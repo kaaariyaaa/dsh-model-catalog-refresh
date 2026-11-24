@@ -10,7 +10,7 @@
  * @module dsh-model-catalog-refresh/service
  */
 
-import { CatalogRefreshError, describeError } from './errors.js'
+import { CatalogRefreshError, describeConfigWriteError, describeError } from './errors.js'
 import { assertHeaderSafeCredential, fetchModelListing } from './fetch.js'
 import { isListingProtocol, type ListingProtocol } from './listing.js'
 import { mergeModelLists } from './merge.js'
@@ -527,7 +527,7 @@ export class ModelCatalogRefresh {
     const failed = failedReport(
       change.target.provider,
       change.target.displayName,
-      `could not persist the model list: ${describeError(caught)}`,
+      `could not persist the model list: ${describeConfigWriteError(caught)}`,
       change.target.existingModels.length,
     )
     if (index >= 0) reports[index] = failed

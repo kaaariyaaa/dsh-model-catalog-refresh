@@ -107,6 +107,50 @@ test('ACP help still exits cleanly and advertises model-refresh', { skip }, asyn
   assert.doesNotMatch(result.stderr, /startup failed/)
 })
 
+test('ACP still serves when the automatic refresh service is unavailable', { skip }, async (t) => {
+  const { home } = await makeHome(`- id: model-catalog-refresh
+  disabled: true
+`)
+  t.after(() => fs.rm(home, { recursive: true, force: true }))
+
+  const child = spawn(dshBin, ['testacp'], {
+    cwd: repo,
+    env: { ...process.env, DSH_HOME: home },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  t.after(() => { child.kill('SIGKILL') })
+  let stderr = ''
+  child.stderr.on('data', chunk => { stderr += chunk.toString() })
+
+  const pending = new Map()
+  const lines = readline.createInterface({ input: child.stdout })
+  lines.on('line', (line) => {
+    let message
+    try { message = JSON.parse(line) } catch { return }
+    const waiter = pending.get(message.id)
+    if (waiter === undefined) return
+    pending.delete(message.id)
+    if (message.error) waiter.reject(new Error(JSON.stringify(message.error)))
+    else waiter.resolve(message.result)
+  })
+  const request = (method, params, timeoutMs = 20_000) => new Promise((resolve, reject) => {
+    const id = 1
+    const timer = setTimeout(() => {
+      pending.delete(id)
+      reject(new Error(`timed out waiting for ${method}\nstderr:\n${stderr}`))
+    }, timeoutMs)
+    pending.set(id, {
+      resolve: (value) => { clearTimeout(timer); resolve(value) },
+      reject: (error) => { clearTimeout(timer); reject(error) },
+    })
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+  })
+
+  const init = await request('initialize', { protocolVersion: 1, clientCapabilities: {} })
+  assert.equal(init.agentInfo.name, 'deepseek-harness-acp')
+  child.stdin.end()
+})
+
 test('CLI adds, removes, and preserves entries, then is idempotent', { skip }, async (t) => {
   const provider = await startProvider((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })

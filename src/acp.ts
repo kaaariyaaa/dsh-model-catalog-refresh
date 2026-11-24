@@ -14,7 +14,7 @@
 import { Command } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
 import { exitOnStdinEnd, parseCmdline } from '@deepseek-ai/dsh-cmdline'
-import type {} from './index.js'
+import type { ModelCatalogRefreshApi } from './index.js'
 
 import { describeError } from './errors.js'
 import { formatReport } from './report.js'
@@ -25,15 +25,15 @@ const ACP_APP_STARTUP_SERVICE = 'acpAppStartup'
 /** Stable plugin name for diagnostics. */
 export const name = 'model-catalog-refresh-acp'
 
-/** Wait for the launcher command line and the refresh service before parsing. */
-export const inject = ['cmdlineArgs', 'modelCatalogRefresh']
+/** Wait for the launcher command line only; the refresh service is an optional collaborator. */
+export const inject = ['cmdlineArgs']
 
 /**
  * Run one manual refresh, print its report, and request the process exit code.
  * @param ctx - plugin context carrying the refresh service and exit request.
  */
-async function runManual(ctx: Context): Promise<void> {
-  const report = await ctx.modelCatalogRefresh.refresh('manual')
+async function runManual(ctx: Context, refresh: ModelCatalogRefreshApi): Promise<void> {
+  const report = await refresh.refresh('manual')
   await new Promise<void>((resolve) => {
     process.stdout.write(`${formatReport(report)}\n`, () => { resolve() })
   })
@@ -52,7 +52,9 @@ async function runManual(ctx: Context): Promise<void> {
 function afterReady(ctx: Context, callback: () => void): void {
   const ready = ctx.get('appReady')
   if (ready === undefined) {
-    setTimeout(callback, 0)
+    const timer = setTimeout(callback, 0)
+    timer.unref?.()
+    ctx.effect(() => () => { clearTimeout(timer) }, 'model-catalog-refresh.acp-ready')
     return
   }
   const cancel = ready.onReady(callback)
@@ -79,8 +81,16 @@ Examples:
     ctx.provide(ACP_APP_STARTUP_SERVICE, { accepted: true })
     // appReady commits after the tree has mounted. Starting the first refresh
     // from that signal keeps startup work off the boot path and gives the ACP
-    // bridge its stdio claim first.
-    afterReady(ctx, () => { ctx.modelCatalogRefresh.start() })
+    // bridge its stdio claim first. A missing refresh service must not prevent
+    // ACP from serving; it only loses automatic catalog maintenance.
+    afterReady(ctx, () => {
+      const refresh = ctx.get('modelCatalogRefresh')
+      if (refresh === undefined) {
+        ctx.logger.warn('model-catalog-refresh: the refresh service is not mounted; serving ACP without automatic refresh')
+        return
+      }
+      refresh.start()
+    })
   })
 
   program
@@ -91,7 +101,14 @@ Examples:
       // no acpAppStartup consumer exists and nothing can bind stdin. appReady
       // still commits once the rest of the tree mounts.
       const launch = (): void => {
-        void runManual(ctx).catch((error: unknown) => {
+        const refresh = ctx.get('modelCatalogRefresh')
+        if (refresh === undefined) {
+          process.stderr.write('model-catalog-refresh: the refresh service is not mounted\n', () => {
+            ctx.get('appExit')?.(1)
+          })
+          return
+        }
+        void runManual(ctx, refresh).catch((error: unknown) => {
           const exit = ctx.get('appExit')
           process.stderr.write(`model-catalog-refresh: ${describeError(error)}\n`, () => { exit?.(1) })
         })

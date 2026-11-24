@@ -73,6 +73,7 @@ export function createRefreshScheduler(
         timers.clearInterval(periodic)
         periodic = undefined
       }
+      started = false
     },
   }
 }

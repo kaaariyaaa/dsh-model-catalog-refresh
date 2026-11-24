@@ -58,3 +58,24 @@ export function describeError(error: unknown): string {
   }
   return 'operation failed'
 }
+
+
+/**
+ * Describe a configuration-write failure without echoing foreign error text.
+ *
+ * The configuration editor's home-patch/overlay refusal is a fixed, safe
+ * message that tells the user exactly what to remove, so it is surfaced as
+ * guidance. Every other foreign error is reduced to its class name by
+ * {@link describeError}.
+ * @param error - caught value from a configuration write.
+ * @returns a safe, actionable message.
+ */
+export function describeConfigWriteError(error: unknown): string {
+  if (
+    error instanceof Error
+    && /is overridden by a home patch or command-line overlay/.test(error.message)
+  ) {
+    return 'the profile configuration is overridden by a home patch or --patch overlay; remove that override to allow a refresh'
+  }
+  return describeError(error)
+}
